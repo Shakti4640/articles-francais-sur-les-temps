@@ -14883,15 +14883,143 @@ if (document.readyState === 'loading') {
 // ─── PARAGRAPH TTS READER (Web Speech API — fr-FR) ─────────────
 // ═══════════════════════════════════════════════════════════════
 (function () {
-    if (!window.speechSynthesis) return; // silently skip if unsupported
+    if (!window.speechSynthesis) return;
 
-    let currentBtn = null;
+    let currentBtn   = null;
+    let isStopped    = false;
+
+    // Pause durations (ms) inserted between chunks via a silent utterance trick
+    const PAUSE = {
+        comma:     180,   // ,  and  ;
+        period:    380,   // .  !  ?
+    };
+
+    function makePause(ms) {
+        // Speak a near-silent space; onend fires after ~ms due to rate trick
+        const u  = new SpeechSynthesisUtterance(' ');
+        u.lang   = 'fr-FR';
+        u.volume = 0;
+        u.rate   = Math.max(0.1, 10 / ms); // rate inversely controls duration
+        return u;
+    }
+
+    // French conjunctions/subordinators that signal a natural breath point
+    const BREATH_WORDS = [
+        'et que', 'et qu\'', 'mais que', 'mais qu\'',
+        'ou que', 'ou qu\'', 'car que', 'car qu\'',
+        'pour que', 'pour qu\'', 'afin que', 'afin qu\'',
+        'parce que', 'parce qu\'', 'bien que', 'bien qu\'',
+        'alors que', 'quand que',
+        'et ils', 'et elle', 'et elles', 'et il',
+        'et les', 'et la ', 'et le ', 'et l\'',
+        'et nous', 'et vous', 'et on ',
+        'et les', 'et leur', 'et leurs',
+        'mais ', 'cependant ', 'toutefois ', 'néanmoins ',
+        'donc ', 'ainsi ', 'or ', 'car ',
+        'dont ', 'lequel ', 'laquelle ', 'lesquels ', 'lesquelles ',
+        'qui ', 'que ', 'qu\'',
+    ];
+
+    function splitIntoChunks(text) {
+        const chunks = [];
+
+        // Step 1: Split on punctuation first (commas, semicolons, periods etc.)
+        // keeping the delimiter attached to its preceding chunk
+        const byPunct = text.split(/(?<=[,;.!?…])\s*/);
+
+        byPunct.forEach(segment => {
+            const seg = segment.trim();
+            if (!seg) return;
+
+            const lastChar = seg[seg.length - 1];
+            const isPunct  = ',;'.includes(lastChar);
+            const isSentenceEnd = '.!?…'.includes(lastChar);
+
+            // Step 2: If segment is long (>80 chars) and has no punctuation break,
+            // try splitting on breath-conjunctions
+            if (!isPunct && !isSentenceEnd && seg.length > 80) {
+                const lower = seg.toLowerCase();
+                let splitIdx = -1;
+                let splitLen = 0;
+
+                // Find the first breath-word that appears after position 30
+                // (avoid splitting too close to the start)
+                for (const bw of BREATH_WORDS) {
+                    const pos = lower.indexOf(bw, 30);
+                    if (pos !== -1 && (splitIdx === -1 || pos < splitIdx)) {
+                        splitIdx = pos;
+                        splitLen = bw.length;
+                    }
+                }
+
+                if (splitIdx !== -1) {
+                    // First sub-chunk (before the conjunction)
+                    const before = seg.slice(0, splitIdx).trim();
+                    // Second sub-chunk (conjunction + rest)
+                    const after  = seg.slice(splitIdx).trim();
+
+                    if (before) chunks.push({ text: before, pauseAfter: PAUSE.comma });
+                    // Recursively split the remainder in case it's still long
+                    splitIntoChunks(after).forEach(c => chunks.push(c));
+                    return;
+                }
+            }
+
+            // No sub-split needed — push as-is
+            let pauseAfter = 0;
+            if (isPunct)       pauseAfter = PAUSE.comma;
+            else if (isSentenceEnd) pauseAfter = PAUSE.period;
+            chunks.push({ text: seg, pauseAfter });
+        });
+
+        return chunks;
+    }
+
+    function speakChunks(chunks, btn) {
+        isStopped = false;
+
+        function next(i) {
+            if (isStopped || i >= chunks.length) {
+                // All done — reset button
+                if (!isStopped && currentBtn === btn) {
+                    btn.textContent = '🔊';
+                    btn.title       = 'Lire ce paragraphe';
+                    currentBtn      = null;
+                }
+                return;
+            }
+
+            const { text, pauseAfter } = chunks[i];
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang  = 'fr-FR';
+            utter.rate  = 0.88;
+
+            utter.onend = () => {
+                if (isStopped) return;
+                if (pauseAfter > 0) {
+                    const pause = makePause(pauseAfter);
+                    pause.onend = () => next(i + 1);
+                    window.speechSynthesis.speak(pause);
+                } else {
+                    next(i + 1);
+                }
+            };
+            utter.onerror = () => {
+                if (!isStopped) next(i + 1); // skip errored chunk, continue
+            };
+
+            window.speechSynthesis.speak(utter);
+        }
+
+        next(0);
+    }
 
     function stopSpeech() {
+        isStopped = true;
         window.speechSynthesis.cancel();
         if (currentBtn) {
             currentBtn.textContent = '🔊';
-            currentBtn.title = 'Lire ce paragraphe';
+            currentBtn.title       = 'Lire ce paragraphe';
             currentBtn = null;
         }
     }
@@ -14901,7 +15029,6 @@ if (document.readyState === 'loading') {
         const paragraphs  = contentRoot.querySelectorAll('p');
 
         paragraphs.forEach(p => {
-            // Skip if button already added (e.g. re-runs)
             if (p.nextElementSibling && p.nextElementSibling.classList.contains('tts-btn')) return;
 
             const btn = document.createElement('button');
@@ -14924,28 +15051,17 @@ if (document.readyState === 'loading') {
             });
 
             btn.addEventListener('click', () => {
-                // If this paragraph is already playing, stop it
                 if (currentBtn === btn) { stopSpeech(); return; }
-
                 stopSpeech();
 
-                const utter = new SpeechSynthesisUtterance(p.innerText);
-                utter.lang  = 'fr-FR';
-                utter.rate  = 0.92;
+                const chunks = splitIntoChunks(p.innerText);
+                if (!chunks.length) return;
 
                 btn.textContent = '⏹';
                 btn.title       = 'Arrêter la lecture';
                 currentBtn      = btn;
 
-                utter.onend = utter.onerror = () => {
-                    if (currentBtn === btn) {
-                        btn.textContent = '🔊';
-                        btn.title       = 'Lire ce paragraphe';
-                        currentBtn      = null;
-                    }
-                };
-
-                window.speechSynthesis.speak(utter);
+                speakChunks(chunks, btn);
             });
 
             p.insertAdjacentElement('afterend', btn);
