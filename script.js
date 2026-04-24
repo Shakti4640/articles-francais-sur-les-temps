@@ -14878,3 +14878,83 @@ if (document.readyState === 'loading') {
 } else {
     buildHighlightToolbar();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ─── PARAGRAPH TTS READER (Web Speech API — fr-FR) ─────────────
+// ═══════════════════════════════════════════════════════════════
+(function () {
+    if (!window.speechSynthesis) return; // silently skip if unsupported
+
+    let currentBtn = null;
+
+    function stopSpeech() {
+        window.speechSynthesis.cancel();
+        if (currentBtn) {
+            currentBtn.textContent = '🔊';
+            currentBtn.title = 'Lire ce paragraphe';
+            currentBtn = null;
+        }
+    }
+
+    function addReadButtons() {
+        const contentRoot = document.querySelector('.content') || document.body;
+        const paragraphs  = contentRoot.querySelectorAll('p');
+
+        paragraphs.forEach(p => {
+            // Skip if button already added (e.g. re-runs)
+            if (p.nextElementSibling && p.nextElementSibling.classList.contains('tts-btn')) return;
+
+            const btn = document.createElement('button');
+            btn.className   = 'tts-btn';
+            btn.textContent = '🔊';
+            btn.title       = 'Lire ce paragraphe';
+            Object.assign(btn.style, {
+                display:      'inline-flex',
+                alignItems:   'center',
+                margin:       '3px 0 10px 0',
+                padding:      '3px 10px',
+                fontSize:     '0.75em',
+                background:   '#f0f4ff',
+                border:       '1px solid #b0bcd4',
+                borderRadius: '4px',
+                cursor:       'pointer',
+                color:        '#334466',
+                lineHeight:   '1.4',
+                userSelect:   'none',
+            });
+
+            btn.addEventListener('click', () => {
+                // If this paragraph is already playing, stop it
+                if (currentBtn === btn) { stopSpeech(); return; }
+
+                stopSpeech();
+
+                const utter = new SpeechSynthesisUtterance(p.innerText);
+                utter.lang  = 'fr-FR';
+                utter.rate  = 0.92;
+
+                btn.textContent = '⏹';
+                btn.title       = 'Arrêter la lecture';
+                currentBtn      = btn;
+
+                utter.onend = utter.onerror = () => {
+                    if (currentBtn === btn) {
+                        btn.textContent = '🔊';
+                        btn.title       = 'Lire ce paragraphe';
+                        currentBtn      = null;
+                    }
+                };
+
+                window.speechSynthesis.speak(utter);
+            });
+
+            p.insertAdjacentElement('afterend', btn);
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', addReadButtons);
+    } else {
+        addReadButtons();
+    }
+})();
