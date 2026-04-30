@@ -155,6 +155,7 @@ document.addEventListener('keydown', function (e) {
 // ─── CATEGORY HIGHLIGHT — INBUILT DATA ─────────────────────────
 // ═══════════════════════════════════════════════════════════════
 
+
 // ── To update words: just edit this object directly ──
 const VOCAB_DATA = {
   "verbs": [
@@ -14686,19 +14687,19 @@ const VOCAB_DATA = {
   }
 };
 
+
 // ── Visual style for each category ──
 const CATEGORY_STYLES = {
-    verbs:        { color: '#dc2626', fontWeight: 'bold',   fontStyle: 'normal' },  // red + bold
-    conjunctions: { color: '#16a34a', fontWeight: 'bold',   fontStyle: 'normal' },  // green + bold
-    prepositions: { color: '#dc2626', fontWeight: 'normal', fontStyle: 'italic'  }, // red + italic
-    nouns:        { color: '#1a6fd4', fontWeight: 'bold',   fontStyle: 'normal' },  // blue + bold
-    cognates:     { color: '#000000', fontWeight: 'bold',   fontStyle: 'italic'  }, // black + bold + italic
+    verbs:        { color: '#dc2626', fontWeight: 'bold',   fontStyle: 'normal' },
+    conjunctions: { color: '#16a34a', fontWeight: 'bold',   fontStyle: 'normal' },
+    prepositions: { color: '#dc2626', fontWeight: 'normal', fontStyle: 'italic'  },
+    nouns:        { color: '#1a6fd4', fontWeight: 'bold',   fontStyle: 'normal' },
+    cognates:     { color: '#000000', fontWeight: 'bold',   fontStyle: 'italic'  },
 };
 
 let activeCategory = null;
 let highlightSpans = [];
 
-// ── Build the toolbar ──
 function buildHighlightToolbar() {
     const bar = document.createElement('div');
     bar.id = 'highlight-toolbar';
@@ -14751,7 +14752,6 @@ function buildHighlightToolbar() {
         bar.appendChild(btn);
     });
 
-    // ✕ Clear button
     const clearBtn = document.createElement('button');
     clearBtn.textContent = '✕ Clear';
     Object.assign(clearBtn.style, {
@@ -14773,30 +14773,22 @@ function buildHighlightToolbar() {
     document.body.appendChild(bar);
 }
 
-// ── Toggle a category on/off ──
 function toggleCategory(key, activeColor) {
-    // Clicking the same active button → turn off
     if (activeCategory === key) { clearHighlights(); return; }
-
     clearHighlights();
     activeCategory = key;
-
-    // Highlight active button
     document.querySelectorAll('[id^="hl-btn-"]').forEach(b => {
         Object.assign(b.style, { background: '#2a2a3e', color: '#ccc', borderColor: 'transparent' });
     });
     const activeBtn = document.getElementById(`hl-btn-${key}`);
     if (activeBtn) Object.assign(activeBtn.style, { background: activeColor, color: '#fff', borderColor: activeColor });
-
     const styles   = CATEGORY_STYLES[key];
     const wordList = key === 'cognates'
         ? Object.keys(VOCAB_DATA.cognates || {})
         : (VOCAB_DATA[key] || []);
-
     if (wordList.length) highlightWordsInContent(wordList, styles, key);
 }
 
-// ── Remove all highlights ──
 function clearHighlights() {
     highlightSpans.forEach(span => {
         const parent = span.parentNode;
@@ -14811,11 +14803,9 @@ function clearHighlights() {
     });
 }
 
-// ── Walk text nodes and wrap matched words ──
 function highlightWordsInContent(wordList, styles, categoryKey) {
     const wordSet     = new Set(wordList.map(w => w.toLowerCase()));
     const contentRoot = document.querySelector('.content') || document.body;
-
     const textNodes = [];
     const walker = document.createTreeWalker(
         contentRoot,
@@ -14835,13 +14825,10 @@ function highlightWordsInContent(wordList, styles, categoryKey) {
     textNodes.forEach(textNode => {
         const text = textNode.nodeValue;
         if (!text.trim()) return;
-
-        // Split into word-tokens and gaps (supports accented chars)
         const tokenRegex = /([A-Za-zÀ-ÖØ-öø-ÿ''`-]+)|([^A-Za-zÀ-ÖØ-öø-ÿ''`-]+)/g;
         let match;
         const parts = [];
         let hasMatch = false;
-
         while ((match = tokenRegex.exec(text)) !== null) {
             const token   = match[0];
             const isWord  = match[1] !== undefined;
@@ -14849,9 +14836,7 @@ function highlightWordsInContent(wordList, styles, categoryKey) {
             parts.push({ token, isMatch });
             if (isMatch) hasMatch = true;
         }
-
         if (!hasMatch) return;
-
         const fragment = document.createDocumentFragment();
         parts.forEach(({ token, isMatch }) => {
             if (!isMatch) {
@@ -14867,17 +14852,16 @@ function highlightWordsInContent(wordList, styles, categoryKey) {
                 highlightSpans.push(span);
             }
         });
-
         textNode.parentNode.replaceChild(fragment, textNode);
     });
 }
 
-// ── Init ──
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', buildHighlightToolbar);
 } else {
     buildHighlightToolbar();
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // ─── PARAGRAPH TTS READER (Web Speech API — fr-FR) ─────────────
@@ -14885,25 +14869,30 @@ if (document.readyState === 'loading') {
 (function () {
     if (!window.speechSynthesis) return;
 
+    // ── Shared state ──────────────────────────────────────────────
     let currentBtn   = null;
     let isStopped    = false;
 
-    // Pause durations (ms) inserted between chunks via a silent utterance trick
+    // ── Read All state ────────────────────────────────────────────
+    let isReadingAll      = false;
+    let readAllParagraphs = [];
+    let readAllIndex      = 0;
+    let readAllMenuBtn    = null;
+
     const PAUSE = {
-        comma:     180,   // ,  and  ;
-        period:    380,   // .  !  ?
+        comma:     180,
+        period:    380,
+        paragraph: 700,   // ← inter-paragraph gap used by Read All
     };
 
     function makePause(ms) {
-        // Speak a near-silent space; onend fires after ~ms due to rate trick
         const u  = new SpeechSynthesisUtterance(' ');
         u.lang   = 'fr-FR';
         u.volume = 0;
-        u.rate   = Math.max(0.1, 10 / ms); // rate inversely controls duration
+        u.rate   = Math.max(0.1, 10 / ms);
         return u;
     }
 
-    // French conjunctions/subordinators that signal a natural breath point
     const BREATH_WORDS = [
         'et que', 'et qu\'', 'mais que', 'mais qu\'',
         'ou que', 'ou qu\'', 'car que', 'car qu\'',
@@ -14921,79 +14910,54 @@ if (document.readyState === 'loading') {
     ];
 
     function splitIntoChunks(text) {
-        const chunks = [];
-
-        // Step 1: Split on punctuation first (commas, semicolons, periods etc.)
-        // keeping the delimiter attached to its preceding chunk
+        const chunks  = [];
         const byPunct = text.split(/(?<=[,;.!?…])\s*/);
-
         byPunct.forEach(segment => {
             const seg = segment.trim();
             if (!seg) return;
-
-            const lastChar = seg[seg.length - 1];
-            const isPunct  = ',;'.includes(lastChar);
+            const lastChar      = seg[seg.length - 1];
+            const isPunct       = ',;'.includes(lastChar);
             const isSentenceEnd = '.!?…'.includes(lastChar);
-
-            // Step 2: If segment is long (>80 chars) and has no punctuation break,
-            // try splitting on breath-conjunctions
             if (!isPunct && !isSentenceEnd && seg.length > 80) {
                 const lower = seg.toLowerCase();
-                let splitIdx = -1;
-                let splitLen = 0;
-
-                // Find the first breath-word that appears after position 30
-                // (avoid splitting too close to the start)
+                let splitIdx = -1, splitLen = 0;
                 for (const bw of BREATH_WORDS) {
                     const pos = lower.indexOf(bw, 30);
-                    if (pos !== -1 && (splitIdx === -1 || pos < splitIdx)) {
-                        splitIdx = pos;
-                        splitLen = bw.length;
-                    }
+                    if (pos !== -1 && (splitIdx === -1 || pos < splitIdx)) { splitIdx = pos; splitLen = bw.length; }
                 }
-
                 if (splitIdx !== -1) {
-                    // First sub-chunk (before the conjunction)
                     const before = seg.slice(0, splitIdx).trim();
-                    // Second sub-chunk (conjunction + rest)
                     const after  = seg.slice(splitIdx).trim();
-
                     if (before) chunks.push({ text: before, pauseAfter: PAUSE.comma });
-                    // Recursively split the remainder in case it's still long
                     splitIntoChunks(after).forEach(c => chunks.push(c));
                     return;
                 }
             }
-
-            // No sub-split needed — push as-is
             let pauseAfter = 0;
-            if (isPunct)       pauseAfter = PAUSE.comma;
+            if (isPunct)            pauseAfter = PAUSE.comma;
             else if (isSentenceEnd) pauseAfter = PAUSE.period;
             chunks.push({ text: seg, pauseAfter });
         });
-
         return chunks;
     }
 
-    function speakChunks(chunks, btn) {
+    // ── Core speaker — accepts optional onComplete callback ───────
+    function speakChunks(chunks, btn, onComplete) {
         isStopped = false;
-
         function next(i) {
             if (isStopped || i >= chunks.length) {
-                // All done — reset button
-                if (!isStopped && currentBtn === btn) {
+                if (btn && !isStopped && currentBtn === btn) {
                     btn.textContent = '🔊';
                     btn.title       = 'Lire ce paragraphe';
                     currentBtn      = null;
                 }
+                if (!isStopped && onComplete) onComplete();
                 return;
             }
-
             const { text, pauseAfter } = chunks[i];
             const utter = new SpeechSynthesisUtterance(text);
             utter.lang  = 'fr-FR';
             utter.rate  = 0.88;
-
             utter.onend = () => {
                 if (isStopped) return;
                 if (pauseAfter > 0) {
@@ -15004,31 +14968,153 @@ if (document.readyState === 'loading') {
                     next(i + 1);
                 }
             };
-            utter.onerror = () => {
-                if (!isStopped) next(i + 1); // skip errored chunk, continue
-            };
-
+            utter.onerror = () => { if (!isStopped) next(i + 1); };
             window.speechSynthesis.speak(utter);
         }
-
         next(0);
     }
 
+    // ── Stop everything ───────────────────────────────────────────
     function stopSpeech() {
-        isStopped = true;
+        isStopped    = true;
+        isReadingAll = false;
         window.speechSynthesis.cancel();
         if (currentBtn) {
             currentBtn.textContent = '🔊';
             currentBtn.title       = 'Lire ce paragraphe';
             currentBtn = null;
         }
+        setActiveParagraphHighlight(null);
+        setReadAllMenuBtnState(false);
     }
 
+    // ── Highlight the paragraph currently being read ──────────────
+    function setActiveParagraphHighlight(p) {
+        document.querySelectorAll('p[data-reading-all]').forEach(el => {
+            el.removeAttribute('data-reading-all');
+            el.style.outline = '';
+        });
+        if (p) {
+            p.setAttribute('data-reading-all', 'true');
+            p.style.outline = '2px solid #3a7bd5';
+        }
+    }
+
+    // ── Advance to the next paragraph in Read All ─────────────────
+    function readNextParagraph() {
+        if (!isReadingAll || readAllIndex >= readAllParagraphs.length) {
+            isReadingAll = false;
+            setActiveParagraphHighlight(null);
+            setReadAllMenuBtnState(false);
+            currentBtn = null;
+            return;
+        }
+
+        const p   = readAllParagraphs[readAllIndex];
+        const btn = (p.nextElementSibling && p.nextElementSibling.classList.contains('tts-btn'))
+            ? p.nextElementSibling : null;
+
+        setActiveParagraphHighlight(p);
+        p.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        if (btn) { btn.textContent = '⏹'; btn.title = 'Arrêter la lecture'; }
+        currentBtn = btn;
+
+        const chunks = splitIntoChunks(p.innerText);
+        if (!chunks.length) { readAllIndex++; readNextParagraph(); return; }
+
+        speakChunks(chunks, btn, () => {
+            // Reset individual button
+            if (btn) { btn.textContent = '🔊'; btn.title = 'Lire ce paragraphe'; }
+            currentBtn = null;
+            if (!isReadingAll) return;
+            readAllIndex++;
+            if (readAllIndex < readAllParagraphs.length) {
+                const pause = makePause(PAUSE.paragraph);
+                pause.onend = () => { if (isReadingAll) readNextParagraph(); };
+                window.speechSynthesis.speak(pause);
+            } else {
+                // Finished all paragraphs
+                setActiveParagraphHighlight(null);
+                setReadAllMenuBtnState(false);
+                isReadingAll = false;
+            }
+        });
+    }
+
+    // ── Start a Read All session ──────────────────────────────────
+    function startReadAll() {
+        stopSpeech();
+        const contentRoot = document.querySelector('.content') || document.body;
+        readAllParagraphs = Array.from(contentRoot.querySelectorAll('p'))
+            .filter(p => p.innerText.trim().length > 0);
+        if (!readAllParagraphs.length) return;
+        readAllIndex = 0;
+        isReadingAll = true;
+        isStopped    = false;
+        setReadAllMenuBtnState(true);
+        readNextParagraph();
+    }
+
+    // ── Hamburger menu button appearance ──────────────────────────
+    function setReadAllMenuBtnState(active) {
+        if (!readAllMenuBtn) return;
+        if (active) {
+            readAllMenuBtn.textContent        = '⏹ Stop Reading';
+            readAllMenuBtn.style.color        = '#f87171';
+            readAllMenuBtn.style.background   = 'rgba(239,68,68,0.12)';
+            readAllMenuBtn.style.borderColor  = '#f87171';
+        } else {
+            readAllMenuBtn.textContent        = '🔊 Read All Articles';
+            readAllMenuBtn.style.color        = '';
+            readAllMenuBtn.style.background   = '';
+            readAllMenuBtn.style.borderColor  = '';
+        }
+    }
+
+    // ── Inject button into the hamburger menu ─────────────────────
+    // ⚠️  Adjust the selector below to match your actual menu element.
+    function injectReadAllButton() {
+        const menu = document.querySelector(
+            '#hamburger-menu, #nav-menu, #sidebar-menu, .hamburger-menu, .nav-menu, .sidebar, nav[role="navigation"]'
+        );
+        if (!menu) { setTimeout(injectReadAllButton, 600); return; }
+        if (menu.querySelector('#read-all-btn')) return;   // already injected
+
+        const btn = document.createElement('button');
+        btn.id          = 'read-all-btn';
+        btn.textContent = '🔊 Read All Articles';
+        Object.assign(btn.style, {
+            display:      'block',
+            width:        '100%',
+            padding:      '9px 16px',
+            margin:       '8px 0',
+            border:       '1px solid #b0bcd4',
+            borderRadius: '6px',
+            background:   'transparent',
+            color:        'inherit',
+            fontSize:     '0.9em',
+            fontWeight:   '600',
+            cursor:       'pointer',
+            textAlign:    'left',
+            transition:   'all 0.18s',
+            userSelect:   'none',
+        });
+        btn.addEventListener('mouseenter', () => { if (!isReadingAll) btn.style.background = 'rgba(58,123,213,0.1)'; });
+        btn.addEventListener('mouseleave', () => { if (!isReadingAll) btn.style.background = ''; });
+        btn.addEventListener('click', () => {
+            if (isReadingAll) stopSpeech();
+            else              startReadAll();
+        });
+
+        readAllMenuBtn = btn;
+        menu.prepend(btn);   // change to menu.appendChild(btn) to put it at the bottom
+    }
+
+    // ── Per-paragraph 🔊 buttons (unchanged behaviour) ────────────
     function addReadButtons() {
         const contentRoot = document.querySelector('.content') || document.body;
-        const paragraphs  = contentRoot.querySelectorAll('p');
-
-        paragraphs.forEach(p => {
+        contentRoot.querySelectorAll('p').forEach(p => {
             if (p.nextElementSibling && p.nextElementSibling.classList.contains('tts-btn')) return;
 
             const btn = document.createElement('button');
@@ -15051,6 +15137,8 @@ if (document.readyState === 'loading') {
             });
 
             btn.addEventListener('click', () => {
+                // Clicking any individual button always stops Read All first
+                if (isReadingAll) stopSpeech();
                 if (currentBtn === btn) { stopSpeech(); return; }
                 stopSpeech();
 
@@ -15060,17 +15148,19 @@ if (document.readyState === 'loading') {
                 btn.textContent = '⏹';
                 btn.title       = 'Arrêter la lecture';
                 currentBtn      = btn;
-
-                speakChunks(chunks, btn);
+                speakChunks(chunks, btn, null);
             });
 
             p.insertAdjacentElement('afterend', btn);
         });
     }
 
+    // ── Init ──────────────────────────────────────────────────────
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', addReadButtons);
+        document.addEventListener('DOMContentLoaded', () => { addReadButtons(); injectReadAllButton(); });
     } else {
         addReadButtons();
+        injectReadAllButton();
     }
+
 })();
