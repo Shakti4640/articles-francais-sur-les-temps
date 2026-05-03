@@ -15074,80 +15074,28 @@ if (document.readyState === 'loading') {
         readNextParagraph();
     }
 
-    // ── Hamburger menu button appearance ──────────────────────────
+    // ── Hamburger menu button + floating button appearance ────────
     function setReadAllMenuBtnState(active) {
-        if (!readAllMenuBtn) return;
-        if (active) {
-            readAllMenuBtn.textContent        = '⏹ Stop Reading';
-            readAllMenuBtn.style.color        = '#f87171';
-            readAllMenuBtn.style.background   = 'rgba(239,68,68,0.12)';
-            readAllMenuBtn.style.borderColor  = '#f87171';
-        } else {
-            readAllMenuBtn.textContent        = '🔊 Read All Articles';
-            readAllMenuBtn.style.color        = '';
-            readAllMenuBtn.style.background   = '';
-            readAllMenuBtn.style.borderColor  = '';
-        }
-    }
-
-    // ── Inject button into the hamburger menu ─────────────────────
-    // Strategy: find the menu panel that is NOT the top nav bar.
-    // We prefer elements with IDs/classes that suggest a slide-out or
-    // overlay menu, and fall back to scanning for a container that
-    // has navigation links inside it but is NOT a <header>.
-    function findMenuPanel() {
-        // Priority 1 — explicit hamburger/sidebar IDs and classes
-        const explicit =
-            document.querySelector('#hamburger-menu')   ||
-            document.querySelector('#nav-menu')         ||
-            document.querySelector('#sidebar-menu')     ||
-            document.querySelector('#sidebar')          ||
-            document.querySelector('#menu')             ||
-            document.querySelector('.hamburger-menu')   ||
-            document.querySelector('.nav-menu')         ||
-            document.querySelector('.sidebar')          ||
-            document.querySelector('.menu-content')     ||
-            document.querySelector('.nav-content')      ||
-            document.querySelector('.side-menu')        ||
-            document.querySelector('.drawer')           ||
-            document.querySelector('.slide-menu')       ||
-            document.querySelector('[role="dialog"]')   ||
-            document.querySelector('[aria-label*="menu" i]');
-        if (explicit) return explicit;
-
-        // Priority 2 — a <nav> or <div> that is NOT inside <header>
-        // and contains <a> links (typical hamburger panel)
-        const navCandidates = Array.from(document.querySelectorAll('nav, [class*="menu"], [class*="nav"]'));
-        for (const el of navCandidates) {
-            if (el.closest('header')) continue;          // skip top-bar navs
-            if (el.querySelectorAll('a').length > 0) return el;
-        }
-
-        return null;
-    }
-
-    function injectReadAllButton() {
-        const menu = findMenuPanel();
-
-        if (!menu) {
-            // Menu not in DOM yet — retry. Also watch for it to appear.
-            setTimeout(injectReadAllButton, 600);
-
-            // MutationObserver fallback: watch body for added nodes
-            if (!injectReadAllButton._observer) {
-                injectReadAllButton._observer = new MutationObserver(() => {
-                    if (findMenuPanel()) {
-                        injectReadAllButton._observer.disconnect();
-                        injectReadAllButton();
-                    }
-                });
-                injectReadAllButton._observer.observe(document.body, { childList: true, subtree: true });
+        // Update the in-menu button if injected
+        if (readAllMenuBtn) {
+            if (active) {
+                readAllMenuBtn.textContent        = '⏹ Stop Reading';
+                readAllMenuBtn.style.color        = '#f87171';
+                readAllMenuBtn.style.background   = 'rgba(239,68,68,0.12)';
+                readAllMenuBtn.style.borderColor  = '#f87171';
+            } else {
+                readAllMenuBtn.textContent        = '🔊 Read All Paragraphs';
+                readAllMenuBtn.style.color        = '';
+                readAllMenuBtn.style.background   = '';
+                readAllMenuBtn.style.borderColor  = '';
             }
-            return;
         }
+        // Update the floating button too
+        if (window.__ttsUpdateFab) window.__ttsUpdateFab(active);
+    }
 
-        if (menu.querySelector('#read-all-btn')) return;   // already injected
-
+    // ── Create the Read All button element ────────────────────────
+    function createReadAllButton() {
         const btn = document.createElement('button');
         btn.id          = 'read-all-btn';
         btn.textContent = '🔊 Read All Paragraphs';
@@ -15173,9 +15121,114 @@ if (document.readyState === 'loading') {
             if (isReadingAll) stopSpeech();
             else              startReadAll();
         });
+        return btn;
+    }
 
+    // ── Floating fallback button (always visible, bottom-right) ───
+    // This guarantees the feature works even if menu injection fails.
+    function addFloatingButton() {
+        if (document.getElementById('read-all-floating')) return;
+        const fab = document.createElement('button');
+        fab.id = 'read-all-floating';
+        fab.textContent = '🔊';
+        fab.title = 'Read All Paragraphs';
+        Object.assign(fab.style, {
+            position:     'fixed',
+            bottom:       '80px',
+            right:        '18px',
+            zIndex:       '999999',
+            width:        '48px',
+            height:       '48px',
+            borderRadius: '50%',
+            border:       '2px solid #3a7bd5',
+            background:   '#1e1e2e',
+            color:        '#fff',
+            fontSize:     '20px',
+            cursor:       'pointer',
+            boxShadow:    '0 4px 12px rgba(0,0,0,0.4)',
+            transition:   'all 0.2s',
+            userSelect:   'none',
+            lineHeight:   '1',
+        });
+        fab.addEventListener('mouseenter', () => { fab.style.transform = 'scale(1.1)'; });
+        fab.addEventListener('mouseleave', () => { fab.style.transform = ''; });
+        fab.addEventListener('click', () => {
+            if (isReadingAll) { stopSpeech(); fab.textContent = '🔊'; fab.title = 'Read All Paragraphs'; }
+            else { startReadAll(); fab.textContent = '⏹'; fab.title = 'Stop Reading'; }
+        });
+
+        // Keep the floating button in sync with state via global hook
+        window.__ttsUpdateFab = (active) => {
+            fab.textContent = active ? '⏹' : '🔊';
+            fab.title = active ? 'Stop Reading' : 'Read All Paragraphs';
+            fab.style.borderColor = active ? '#f87171' : '#3a7bd5';
+        };
+
+        document.body.appendChild(fab);
+    }
+
+    // ── Inject button into hamburger menu panel ───────────────────
+    // Tries every selector we can think of. Uses MutationObserver
+    // so it works even when reader.js creates the menu dynamically.
+    let _menuInjected = false;
+
+    function tryInjectIntoMenu() {
+        if (_menuInjected) return;
+
+        // Try every plausible selector for a hamburger/sidebar panel
+        const selectors = [
+            '#hamburger-menu', '#nav-menu', '#sidebar-menu', '#sidebar',
+            '#menu', '#drawer', '#side-panel', '#reader-menu',
+            '.hamburger-menu', '.nav-menu', '.sidebar', '.menu-content',
+            '.nav-content', '.side-menu', '.drawer', '.slide-menu',
+            '.reader-menu', '.reader-sidebar', '.panel',
+            '[role="dialog"]', '[role="menu"]', '[role="navigation"]',
+            'aside',
+        ];
+
+        let menu = null;
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && !el.closest('header')) { menu = el; break; }
+        }
+
+        // Also scan every <nav> and <div> that is NOT inside <header>
+        // and has more than 2 child elements (looks like a real menu)
+        if (!menu) {
+            const candidates = document.querySelectorAll('nav, aside, [class*="menu"], [class*="sidebar"], [class*="panel"], [class*="drawer"]');
+            for (const el of candidates) {
+                if (el.closest('header')) continue;
+                if (el.children.length >= 1) { menu = el; break; }
+            }
+        }
+
+        if (!menu) return false;  // not found yet
+
+        // Avoid double-injection
+        if (menu.querySelector('#read-all-btn')) { _menuInjected = true; return true; }
+
+        const btn = createReadAllButton();
         readAllMenuBtn = btn;
-        menu.prepend(btn);   // change to menu.appendChild(btn) to put it at the bottom
+        menu.prepend(btn);
+        _menuInjected = true;
+        return true;
+    }
+
+    function injectReadAllButton() {
+        if (tryInjectIntoMenu()) return;
+
+        // Not found yet — watch DOM for menu to appear (reader.js may create it later)
+        const observer = new MutationObserver(() => {
+            if (tryInjectIntoMenu()) observer.disconnect();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Also retry on interval as a belt-and-suspenders fallback
+        let attempts = 0;
+        const interval = setInterval(() => {
+            attempts++;
+            if (tryInjectIntoMenu() || attempts > 20) clearInterval(interval);
+        }, 500);
     }
 
     // ── Per-paragraph 🔊 buttons (unchanged behaviour) ────────────
@@ -15215,7 +15268,7 @@ if (document.readyState === 'loading') {
                 btn.textContent = '⏹';
                 btn.title       = 'Arrêter la lecture';
                 currentBtn      = btn;
-                isStopped       = false;   // FIX: re-enable after stopSpeech
+                isStopped       = false;
                 speakChunks(chunks, btn, null);
             });
 
@@ -15224,11 +15277,16 @@ if (document.readyState === 'loading') {
     }
 
     // ── Init ──────────────────────────────────────────────────────
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => { addReadButtons(); injectReadAllButton(); });
-    } else {
+    function init() {
         addReadButtons();
-        injectReadAllButton();
+        addFloatingButton();    // always-visible fallback FAB
+        injectReadAllButton();  // also try to inject into hamburger menu
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 
 })();
