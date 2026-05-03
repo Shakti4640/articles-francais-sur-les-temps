@@ -14870,13 +14870,22 @@ if (document.readyState === 'loading') {
 
     // ── Shared state ──────────────────────────────────────────────
     let currentBtn   = null;
-    let isStopped    = false;
+    let isStopped    = true;   // FIX: start as true so first speakChunks call works correctly
 
     // ── Read All state ────────────────────────────────────────────
     let isReadingAll      = false;
     let readAllParagraphs = [];
     let readAllIndex      = 0;
     let readAllMenuBtn    = null;
+
+    // ── Chrome keepalive: Chrome silently pauses after ~15s ───────
+    // Ping speechSynthesis.resume() every 10s to prevent it.
+    setInterval(() => {
+        if (!isStopped && window.speechSynthesis.speaking) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+        }
+    }, 10000);
 
     const PAUSE = {
         comma:     180,
@@ -14941,8 +14950,8 @@ if (document.readyState === 'loading') {
     }
 
     // ── Core speaker — accepts optional onComplete callback ───────
+    // NOTE: callers must set isStopped = false before calling this.
     function speakChunks(chunks, btn, onComplete) {
-        isStopped = false;
         function next(i) {
             if (isStopped || i >= chunks.length) {
                 if (btn && !isStopped && currentBtn === btn) {
@@ -14975,7 +14984,7 @@ if (document.readyState === 'loading') {
 
     // ── Stop everything ───────────────────────────────────────────
     function stopSpeech() {
-        isStopped    = true;
+        isStopped    = true;   // set BEFORE cancel so onerror/onend handlers bail
         isReadingAll = false;
         window.speechSynthesis.cancel();
         if (currentBtn) {
@@ -15009,9 +15018,16 @@ if (document.readyState === 'loading') {
             return;
         }
 
-        const p   = readAllParagraphs[readAllIndex];
-        const btn = (p.nextElementSibling && p.nextElementSibling.classList.contains('tts-btn'))
-            ? p.nextElementSibling : null;
+        const p = readAllParagraphs[readAllIndex];
+        // FIX: find the tts-btn more robustly — scan siblings, not just immediate next
+        let btn = null;
+        let sib = p.nextElementSibling;
+        while (sib) {
+            if (sib.classList.contains('tts-btn')) { btn = sib; break; }
+            // stop if we hit another paragraph
+            if (sib.tagName === 'P') break;
+            sib = sib.nextElementSibling;
+        }
 
         setActiveParagraphHighlight(p);
         p.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -15022,6 +15038,7 @@ if (document.readyState === 'loading') {
         const chunks = splitIntoChunks(p.innerText);
         if (!chunks.length) { readAllIndex++; readNextParagraph(); return; }
 
+        isStopped = false;   // FIX: ensure not stopped before each paragraph
         speakChunks(chunks, btn, () => {
             // Reset individual button
             if (btn) { btn.textContent = '🔊'; btn.title = 'Lire ce paragraphe'; }
@@ -15029,8 +15046,10 @@ if (document.readyState === 'loading') {
             if (!isReadingAll) return;
             readAllIndex++;
             if (readAllIndex < readAllParagraphs.length) {
+                // Short pause between paragraphs via a silent utterance
+                isStopped = false;
                 const pause = makePause(PAUSE.paragraph);
-                pause.onend = () => { if (isReadingAll) readNextParagraph(); };
+                pause.onend = () => { if (isReadingAll && !isStopped) readNextParagraph(); };
                 window.speechSynthesis.speak(pause);
             } else {
                 // Finished all paragraphs
@@ -15043,14 +15062,14 @@ if (document.readyState === 'loading') {
 
     // ── Start a Read All session ──────────────────────────────────
     function startReadAll() {
-        stopSpeech();
+        stopSpeech();   // clears any running speech; sets isStopped = true
         const contentRoot = document.querySelector('.content') || document.body;
         readAllParagraphs = Array.from(contentRoot.querySelectorAll('p'))
             .filter(p => p.innerText.trim().length > 0);
         if (!readAllParagraphs.length) return;
         readAllIndex = 0;
         isReadingAll = true;
-        isStopped    = false;
+        isStopped    = false;   // FIX: re-enable after stopSpeech set it to true
         setReadAllMenuBtnState(true);
         readNextParagraph();
     }
@@ -15072,29 +15091,66 @@ if (document.readyState === 'loading') {
     }
 
     // ── Inject button into the hamburger menu ─────────────────────
-    function injectReadAllButton() {
-        // Cast a wide net across every plausible menu/nav container
-        const menu =
-            document.querySelector('#hamburger-menu') ||
-            document.querySelector('#nav-menu') ||
-            document.querySelector('#sidebar-menu') ||
-            document.querySelector('#menu') ||
-            document.querySelector('.hamburger-menu') ||
-            document.querySelector('.nav-menu') ||
-            document.querySelector('.sidebar') ||
-            document.querySelector('.menu-content') ||
-            document.querySelector('.nav-content') ||
-            document.querySelector('.side-menu') ||
-            document.querySelector('nav[role="navigation"]') ||
-            document.querySelector('aside') ||
-            document.querySelector('nav');
+    // Strategy: find the menu panel that is NOT the top nav bar.
+    // We prefer elements with IDs/classes that suggest a slide-out or
+    // overlay menu, and fall back to scanning for a container that
+    // has navigation links inside it but is NOT a <header>.
+    function findMenuPanel() {
+        // Priority 1 — explicit hamburger/sidebar IDs and classes
+        const explicit =
+            document.querySelector('#hamburger-menu')   ||
+            document.querySelector('#nav-menu')         ||
+            document.querySelector('#sidebar-menu')     ||
+            document.querySelector('#sidebar')          ||
+            document.querySelector('#menu')             ||
+            document.querySelector('.hamburger-menu')   ||
+            document.querySelector('.nav-menu')         ||
+            document.querySelector('.sidebar')          ||
+            document.querySelector('.menu-content')     ||
+            document.querySelector('.nav-content')      ||
+            document.querySelector('.side-menu')        ||
+            document.querySelector('.drawer')           ||
+            document.querySelector('.slide-menu')       ||
+            document.querySelector('[role="dialog"]')   ||
+            document.querySelector('[aria-label*="menu" i]');
+        if (explicit) return explicit;
 
-        if (!menu) { setTimeout(injectReadAllButton, 600); return; }
+        // Priority 2 — a <nav> or <div> that is NOT inside <header>
+        // and contains <a> links (typical hamburger panel)
+        const navCandidates = Array.from(document.querySelectorAll('nav, [class*="menu"], [class*="nav"]'));
+        for (const el of navCandidates) {
+            if (el.closest('header')) continue;          // skip top-bar navs
+            if (el.querySelectorAll('a').length > 0) return el;
+        }
+
+        return null;
+    }
+
+    function injectReadAllButton() {
+        const menu = findMenuPanel();
+
+        if (!menu) {
+            // Menu not in DOM yet — retry. Also watch for it to appear.
+            setTimeout(injectReadAllButton, 600);
+
+            // MutationObserver fallback: watch body for added nodes
+            if (!injectReadAllButton._observer) {
+                injectReadAllButton._observer = new MutationObserver(() => {
+                    if (findMenuPanel()) {
+                        injectReadAllButton._observer.disconnect();
+                        injectReadAllButton();
+                    }
+                });
+                injectReadAllButton._observer.observe(document.body, { childList: true, subtree: true });
+            }
+            return;
+        }
+
         if (menu.querySelector('#read-all-btn')) return;   // already injected
 
         const btn = document.createElement('button');
         btn.id          = 'read-all-btn';
-        btn.textContent = '🔊 Read All Articles';
+        btn.textContent = '🔊 Read All Paragraphs';
         Object.assign(btn.style, {
             display:      'block',
             width:        '100%',
@@ -15159,6 +15215,7 @@ if (document.readyState === 'loading') {
                 btn.textContent = '⏹';
                 btn.title       = 'Arrêter la lecture';
                 currentBtn      = btn;
+                isStopped       = false;   // FIX: re-enable after stopSpeech
                 speakChunks(chunks, btn, null);
             });
 
