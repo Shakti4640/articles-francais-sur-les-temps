@@ -15164,3 +15164,192 @@ if (document.readyState === 'loading') {
     }
 
 })();
+
+// ============================================================
+//  AUTO-READ ALL PARAGRAPHS  –  add to the bottom of script.js
+// ============================================================
+
+(function () {
+  'use strict';
+
+  /* ── 1. State ─────────────────────────────────────────── */
+  let autoReadActive   = false;
+  let currentParaIndex = 0;
+  let utterance        = null;
+
+  /* ── 2. Collect all article paragraphs ───────────────── */
+  // Adjust the selector if your article wrapper has a different class/id.
+  // This targets every <p> that is a direct descendant of the main
+  // article content area (excludes nav paragraphs, footers, etc.).
+  function getParagraphs() {
+    // Try the most specific selector first; fall back to all <p> tags.
+    const container =
+      document.querySelector('article') ||
+      document.querySelector('.article-content') ||
+      document.querySelector('main') ||
+      document.body;
+
+    return Array.from(container.querySelectorAll('p')).filter(
+      p => p.innerText.trim().length > 10   // skip empty / tiny nodes
+    );
+  }
+
+  /* ── 3. Highlight helpers ─────────────────────────────── */
+  const HIGHLIGHT_CLASS = 'auto-read-active';
+
+  function highlightPara(para) {
+    document.querySelectorAll('.' + HIGHLIGHT_CLASS).forEach(el =>
+      el.classList.remove(HIGHLIGHT_CLASS)
+    );
+    if (para) {
+      para.classList.add(HIGHLIGHT_CLASS);
+      para.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  /* ── 4. Core read loop ────────────────────────────────── */
+  function readParagraph(index) {
+    const paragraphs = getParagraphs();
+
+    if (!autoReadActive || index >= paragraphs.length) {
+      // Finished or stopped
+      stopAutoRead();
+      return;
+    }
+
+    const para = paragraphs[index];
+    highlightPara(para);
+    currentParaIndex = index;
+
+    utterance            = new SpeechSynthesisUtterance(para.innerText);
+    utterance.lang       = 'fr-FR';   // French – matches the article language
+    utterance.rate       = 0.92;      // Slightly slower for clarity
+    utterance.pitch      = 1;
+
+    utterance.onend = () => {
+      if (autoReadActive) {
+        // Small pause between paragraphs
+        setTimeout(() => readParagraph(index + 1), 600);
+      }
+    };
+
+    utterance.onerror = (e) => {
+      // Skip this paragraph on error and continue
+      console.warn('SpeechSynthesis error on paragraph', index, e);
+      if (autoReadActive) setTimeout(() => readParagraph(index + 1), 300);
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  /* ── 5. Start / Stop ──────────────────────────────────── */
+  function startAutoRead() {
+    if (!('speechSynthesis' in window)) {
+      alert('Your browser does not support Text-to-Speech. Try Chrome or Edge.');
+      return;
+    }
+    autoReadActive = true;
+    updateMenuLabel();
+    window.speechSynthesis.cancel();    // clear any previous queue
+    readParagraph(currentParaIndex);
+  }
+
+  function stopAutoRead() {
+    autoReadActive   = false;
+    currentParaIndex = 0;
+    window.speechSynthesis.cancel();
+    document.querySelectorAll('.' + HIGHLIGHT_CLASS).forEach(el =>
+      el.classList.remove(HIGHLIGHT_CLASS)
+    );
+    updateMenuLabel();
+  }
+
+  function toggleAutoRead() {
+    autoReadActive ? stopAutoRead() : startAutoRead();
+  }
+
+  /* ── 6. Keep state clean on page refresh / unload ────── */
+  window.addEventListener('beforeunload', () => {
+    window.speechSynthesis.cancel();
+  });
+
+  /* ── 7. Inject the menu item ──────────────────────────── */
+  function updateMenuLabel() {
+    const btn = document.getElementById('auto-read-btn');
+    if (!btn) return;
+    btn.textContent = autoReadActive ? '⏹ Stop Auto Read' : '▶ Auto Read All';
+    btn.setAttribute('aria-pressed', autoReadActive ? 'true' : 'false');
+  }
+
+  function injectMenuOption() {
+    // ── Locate the hamburger <nav> or <ul> ──────────────
+    // Common patterns: a <ul> inside a <nav>, or a div.menu, etc.
+    const menuList =
+      document.querySelector('nav ul') ||
+      document.querySelector('.menu ul') ||
+      document.querySelector('.nav-links') ||
+      document.querySelector('.hamburger-menu ul') ||
+      document.querySelector('header ul');
+
+    if (!menuList) {
+      console.warn('Auto-Read: could not find a menu list to attach to.');
+      return;
+    }
+
+    const li  = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.id               = 'auto-read-btn';
+    btn.textContent      = '▶ Auto Read All';
+    btn.setAttribute('aria-pressed', 'false');
+
+    // Minimal inline style so it fits any existing menu design;
+    // override in your CSS file via #auto-read-btn if needed.
+    btn.style.cssText = `
+      background : none;
+      border     : none;
+      cursor     : pointer;
+      font       : inherit;
+      color      : inherit;
+      padding    : 0;
+      text-align : left;
+      width      : 100%;
+    `;
+
+    btn.addEventListener('click', () => {
+      toggleAutoRead();
+      // Close the hamburger menu if your site toggles a class for it
+      const menuToggle = document.querySelector('.menu-toggle, .hamburger, #menu-toggle');
+      if (menuToggle) menuToggle.click();
+    });
+
+    li.appendChild(btn);
+    menuList.appendChild(li);
+  }
+
+  /* ── 8. Inject highlight CSS ──────────────────────────── */
+  function injectStyle() {
+    const style = document.createElement('style');
+    style.textContent = `
+      .auto-read-active {
+        background-color : #fffbcc;
+        outline          : 2px solid #f0c040;
+        border-radius    : 4px;
+        transition       : background-color 0.3s ease;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  /* ── 9. Boot ──────────────────────────────────────────── */
+  function init() {
+    injectStyle();
+    injectMenuOption();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})();
